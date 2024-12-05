@@ -1,0 +1,182 @@
+МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ
+ХАРКІВСЬКИЙ НАЦІОНАЛЬНИЙ УНІВЕРСИТЕТ
+РАДІОЕЛЕКТРОНІКИ
+КАФЕДРА ПРОГРАМНОЇ ІНЖЕНЕРІЇ
+ 
+
+
+
+
+ЗВІТ
+з практичної роботи  №2
+з дисципліни «Аналіз та рефакторінг коду»
+на тему «Методи рефакторингу коду програмного забезпечення» 
+ 
+
+
+ 
+Виконав:                                                           	                          Прийняв:
+ст. гр. ПЗПІ-22-10                                                             ст. викл. Сокорчук І. П. 
+Хижняк Д. С.
+
+
+
+Харків 2024
+Мета роботи: навчитись основним методам рефакторингу коду на основі реальних прикладів з власних програмних проєктів. Навчитися ідентифікувати проблеми в коді та використовувати відповідні методи рефакторингу для покращення його якості.
+Відео-презентація: https://youtu.be/CvViFxueYE0.
+Обрана мова програмування — Elixir
+Обрані методи рефакторингу:
+1.	Replace Conditional with Polymorphism.
+2.	Replace Nested Conditional with Guard Clauses.
+3.	Replace Temp with Query.
+Опис методів рефакторингу
+1.	Replace Conditional with Polymorphism.
+Опис проблеми: у коді є умовні вирази (case або if), які обробляють різні типи об'єктів. Це ускладнює розширення логіки та знижує читабельність коду. Приклад коду до рефакторингу знаходиться у дод. А.1.
+Опис методу: метод дозволяє замінити умовну логіку на використання поліморфізму, що спрощує розширення. Наприклад, якщо з’являться нові типи платежів, не потрібно змінювати наявний код. Приклад коду після рефакторингу знаходиться у дод. Б.1.
+Переваги:
+•	Легке додавання нових типів платежів без зміни основного коду.
+•	Код стає більш модульним і зручним для тестування.
+2.	Replace Nested Conditional with Guard Clauses
+Опис проблеми: у коді використовуються вкладені умовні вирази if, що робить його важким для читання та розуміння. Приклад коду до рефакторингу знаходиться у дод. А.2.
+Опис методу: метод дозволяє видалити вкладені умови, використовуючи охоронні вирази (guard clauses). Це робить код більш лаконічним і легко читаним, адже умови перевіряються послідовно та чітко. Приклад коду після рефакторингу знаходиться у дод. Б.2. 
+У прикладі використовується можливість мови Elixir Function Clause Matching у поєднанні з Guard Clauses.
+Переваги:
+•	Логіка стала зрозумілішою завдяки використанню окремих функцій для кожного випадку.
+•	Додавання нових умов можна виконати, не зачіпаючи наявний код.
+•	Код більше не містить вкладених умов, що спрощує його розуміння.
+3.	Replace Temp with Query.
+Опис проблеми: у коді використовуються тимчасові змінні для зберігання проміжних результатів, що ускладнює читабельність і збільшує ймовірність помилок. Приклад коду до рефакторингу знаходиться у дод. А.3.
+Опис методу: метод дозволяє замінити тимчасові змінні на методи або функції, що знижує складність і робить код більш декларативним. Приклад коду після рефакторингу знаходиться у дод. Б.3.
+Переваги:
+•	Чітка структура коду.
+•	Легше розуміти та розширювати функціонал.
+•	Уникнення дублювання коду.
+
+
+ 
+Висновки: рефакторинг є важливою складовою підтримки якості програмного забезпечення. Завдяки застосуванню методів рефакторингу, описаних у цій роботі, вдалося покращити структуру коду, зробити його більш читабельним і зручним для підтримки. У ході рефакторингу було усунуто дублювання, спрощено умовні вирази та знижено загальну складність реалізації. Це сприяло підвищенню тестованості коду, полегшенню внесення змін і зменшенню ризику виникнення помилок у майбутньому. 
+Загалом рефакторинг допомагає перетворити вихідний код на більш організований і легкий для розуміння, що є важливим для ефективної командної роботи та довгострокової підтримки проєктів. Він підкреслює важливість технічної якості коду для забезпечення його стабільності та готовності до подальшого розвитку.
+ 
+Додаток А
+Код до рефакторингу
+
+А.1 Код до першого методу
+defmodule PaymentProcessor do
+  def process(payment_type, amount) do
+    case payment_type do
+      :credit_card -> "Processing #{amount} with Credit Card"
+      :paypal -> "Processing #{amount} with PayPal"
+      :bank_transfer -> "Processing #{amount} with Bank Transfer"
+      _ -> "Unknown payment type"
+    end
+  end
+end
+
+А.2 Код до другого методу
+defmodule Discount do
+  def apply_discount(order_amount) do
+    if order_amount > 1000 do
+      if order_amount > 5000 do
+        order_amount * 0.8
+      else
+        order_amount * 0.9
+      end
+    else
+      order_amount
+    end
+  end
+end
+
+А.3 Код до третього методу
+defmodule Order do
+  def calculate_total(order) do
+    base_price = Enum.sum(order.items)
+    discount = if base_price > 1000, do: base_price * 0.1, else: 0
+    tax = base_price * 0.2
+    base_price - discount + tax
+  end
+end
+
+ 
+Додаток Б
+Код після рефакторингу
+
+Б.1 Код для першого методу
+defprotocol Payment do
+  @doc "Processes a payment"
+  def process(payment, amount)
+end
+defmodule CreditCardPayment do
+  defstruct []
+  defimpl Payment do
+    def process(_, amount), do: "Processing #{amount} with Credit Card"
+  end
+end
+defmodule PayPalPayment do
+  defstruct []
+  defimpl Payment do
+    def process(_, amount), do: "Processing #{amount} with PayPal"
+  end
+end
+defmodule BankTransferPayment do
+  defstruct []
+  defimpl Payment do
+    def process(_, amount), do: "Processing #{amount} with Bank Transfer"
+  end
+end
+Payment.process(%CreditCardPayment{}, 100) # Використання
+Payment.process(%PayPalPayment{}, 200)
+
+Б.2 Код для другого методу
+defmodule Discount do
+  def apply_discount(order_amount) when order_amount > 5000 do
+    order_amount * 0.8
+  end
+  def apply_discount(order_amount) when order_amount > 1000 do
+    order_amount * 0.9
+  end
+  def apply_discount(order_amount) do
+    order_amount
+  end
+end
+
+Б.3 Код для третього методу
+defmodule Order do
+  def calculate_total(order) do
+    base_price(order) - discount(order) + tax(order)
+  end
+
+  defp base_price(order), do: Enum.sum(order.items)
+
+  defp discount(order) do
+    if base_price(order) > 1000, do: base_price(order) * 0.1, else: 0
+  end
+
+  defp tax(order), do: base_price(order) * 0.2
+end
+ 
+ 
+Додаток В
+Презентація
+
+Рис. В.1 – Слайд №1
+
+Рис. В.2 – Слайд №2
+
+Рис. В.3 – Слайд №3
+
+Рис. В.4 – Слайд №4
+
+Рис. В.5 – Слайд №5
+
+Рис. В.6 – Слайд №6
+
+Рис. В.7 – Слайд №7
+
+Рис. В.8 – Слайд №8
+
+Рис. В.9 – Слайд №9
+
+Рис. В.10 – Слайд №10
+
+Рис. В.11 – Слайд №11
