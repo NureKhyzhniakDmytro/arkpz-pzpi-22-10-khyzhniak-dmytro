@@ -18,3 +18,21 @@ def handle_order_response(response) do
     :order_failed
   end
 end
+
+# Приклад №4
+defmodule OrderService do
+  def create_order(params) do
+    params
+    |> validate()
+    |> process_payment()
+    |> save_to_db()
+  end
+end
+
+# Приклад №5
+def place_order(params) do
+  case validate(params) do
+    :ok -> process_order(params)
+    :error -> :validation_failed
+  end
+end
