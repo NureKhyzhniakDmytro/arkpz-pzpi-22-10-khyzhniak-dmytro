@@ -1,0 +1,109 @@
+МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ
+ХАРКІВСЬКИЙ НАЦІОНАЛЬНИЙ УНІВЕРСИТЕТ
+ РАДІОЕЛЕКТРОНІКИ
+
+ 
+
+
+
+
+ЗВІТ
+з лабораторної роботи  №2
+з дисципліни «Аналіз та рефакторінг коду»
+на тему «Розробка бази даних для 
+серверної частини програмної системи та 
+прикладного програмного інтерфейсу (API)» 
+ 
+
+Виконав:                                                         	               Прийняв:
+ст. гр. ПЗПІ-22-10                                                    асист. Дашенков Д. С. 
+Хижняк Д. С.
+
+
+
+Харків 2024
+
+1. Інженерні рішення
+У проекті для керування користувачами використовується Firebase Authentication. Це рішення обрано через його надійність, простоту інтеграції та широкі можливості для автентифікації користувачів. Firebase Auth забезпечує підтримку сучасних методів входу, таких як email і пароль, соціальні мережі та сторонні провайдери, що дозволяє реалізувати зручний і безпечний доступ до системи.
+Для зберігання даних використовується база даних PostgreSQL, яка підключається за допомогою ORM Dapper. PostgreSQL обрано завдяки її високій продуктивності, масштабованості та підтримці складних запитів. Dapper дозволяє швидко й ефективно взаємодіяти з базою даних, забезпечуючи зручну обробку запитів і мінімізацію накладних витрат.
+Серверна частина написана на ASP.NET, використовуючи архітектуру REST API. Це дозволяє створити гнучкий інтерфейс для взаємодії між клієнтською та серверною частинами, забезпечуючи стандартизований обмін даними.
+Для обміну повідомленнями та сповіщення користувачів у системі застосовується Firebase Cloud Messaging. Це рішення забезпечує надійну доставку повідомлень у реальному часі, що дозволяє підтримувати ефективну комунікацію та сповіщення між системою та її користувачами.
+
+2. Use-Case діаграма
+Рис. 2.1 – Use-Case діаграма 
+
+3. ER-діаграма 
+Рис. 2.2 – ER-діаграма
+
+4. Структура бази даних
+Рис. 2.3 – Діаграма структури БД
+
+5. Специфікація API
+Рис. 2.4 – Специфікація API 
+
+Додаток А
+Фрагмент програмного коду взаємодії серверної частини з БД
+
+namespace Airsense.API.Repository;
+
+public class DeviceRepository(IDbConnection connection) : IDeviceRepository
+{
+    public async Task<ICollection<DeviceDto>> GetAsync(int roomId, int count, int skip)
+    {
+        const string sql = """
+                           SELECT
+                               d.id AS Id,
+                               d.serial_number AS SerialNumber,
+                               EXTRACT(EPOCH FROM dd.applied_at) AS ActiveAt,
+                               dd.DeviceSpeed AS FanSpeed
+                           FROM devices d
+                           LEFT JOIN (
+                               SELECT DISTINCT ON (dd.device_id)
+                                   dd.device_id,
+                                   dd.applied_at,
+                                   dd.value AS DeviceSpeed
+                               FROM device_data dd
+                               WHERE dd.applied_at IS NOT NULL
+                               ORDER BY dd.device_id, dd.applied_at DESC, dd.value DESC
+                           ) dd ON d.id = dd.device_id
+                           WHERE d.room_id = @roomId
+                           LIMIT @count 
+                           OFFSET @skip
+                           """;
+        var devices = await connection.QueryAsync<DeviceDto>(sql, new { roomId, count, skip });
+        return devices.ToList();
+    }
+}
+
+ 
+Додаток Б
+Фрагмент програмного коду взаємодії серверної частини з клієнтами
+
+namespace Airsense.API.Controllers;
+
+[ApiController]
+[Route("room/{roomId:int}")]
+[Authorize]
+public class RoomController(
+    IRoomRepository roomRepository,
+    ISensorRepository sensorRepository,
+    IDeviceRepository deviceRepository,
+    ISettingsRepository settingsRepository) : ControllerBase
+{
+    [HttpGet]
+    public async Task<IActionResult> GetAvailableTypes(int roomId)
+    {
+        if (!int.TryParse(User.FindFirstValue("id"), out var userId))
+            return BadRequest(new { message = "You are not registered" });
+
+        var room = await roomRepository.GetByIdAsync(roomId);
+        if (room is null)
+            return NotFound(new { message = "Room not found" });
+
+        if (!await roomRepository.IsHasAccessAsync(userId, roomId))
+            return Forbid();
+
+        var types = await roomRepository.GetAvailableTypesAsync(roomId);
+        return Ok(types);
+    }
+}
