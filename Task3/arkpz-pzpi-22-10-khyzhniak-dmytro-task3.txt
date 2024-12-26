@@ -1,0 +1,297 @@
+МІНІСТЕРСТВО ОСВІТИ І НАУКИ УКРАЇНИ
+ХАРКІВСЬКИЙ НАЦІОНАЛЬНИЙ УНІВЕРСИТЕТ
+ РАДІОЕЛЕКТРОНІКИ
+
+ 
+
+
+
+
+ЗВІТ
+з лабораторної роботи  №3
+з дисципліни «Аналіз та рефакторінг коду»
+на тему «Розробка бізнес-логіки та функцій адміністрування серверної частини програмної системи» 
+ 
+ 
+
+Виконав:                                                              	          Прийняв:
+ст. гр. ПЗПІ-22-10                                                   асист. Дашенков Д. С. 
+Хижняк Д. С.
+
+
+
+Харків 2024
+1.	Опис інженерних рішень
+У процесі розробки системи управління вентиляцією реалізовано логіку для отримання історії змін швидкості пристроїв вентиляції як для всієї кімнати загалом, так і для кожного пристрою окремо. Також передбачена можливість перегляду історії змін для кожного доступного параметра повітря загалом та для кожного сенсора окремо. Код, що реалізує цю функціональність, наведено у Додатку А, а приклади даних – у Додатку Б.
+Дані від сенсорів оброблюються відповідно до налаштувань користувача для кімнати, після чого пристрої вентиляції отримують відповідні інструкції. Користувач має можливість налаштувати криву зміни швидкості роботи пристроїв залежно від значення конкретного параметра повітря. Код, що реалізує цю функцію, наведено у додатку В.
+Крім того, розроблено механізм відправки пуш-повідомлень, які надсилаються всім користувачам середовища у випадку досягнення критичного значення одного з параметрів повітря. Код, що реалізує цю функцію, наведено у Додатку Г.  
+Розроблені рішення забезпечують ефективність управління системою вентиляції та оперативне реагування на зміни параметрів повітря.
+ 
+Додаток А
+Фрагмент коду для отримання історія змін швидкості пристрою
+
+А.1 Обробка запиту користувача
+
+namespace Airsense.API.Controllers;
+
+[ApiController]
+[Route("room/{roomId:int}")]
+[Authorize]
+public class RoomController(
+    IRoomRepository roomRepository,
+    ISensorRepository sensorRepository,
+    IDeviceRepository deviceRepository,
+    ISettingsRepository settingsRepository) : ControllerBase
+{
+    [HttpGet("history/{deviceId:int}")]
+    public async Task<IActionResult> GetDeviceHistory(
+        int roomId,
+        int deviceId,
+        [FromQuery] long? from,
+        [FromQuery] long? to,
+        [FromQuery] HistoryDto.HistoryInterval interval = HistoryDto.HistoryInterval.Hour
+    )
+    {
+        if (!int.TryParse(User.FindFirstValue("id"), out var userId))
+            return BadRequest(new { message = "You are not registered" });
+
+        var room = await roomRepository.GetByIdAsync(roomId);
+        if (room is null)
+            return NotFound(new { message = "Room not found" });
+
+        if (!await roomRepository.IsHasAccessAsync(userId, roomId))
+            return Forbid();
+
+        var device = await deviceRepository.GetByIdAsync(deviceId);
+        if (device is null)
+            return NotFound(new { message = "Device not found" });
+
+        if (device.RoomId != roomId)
+            return BadRequest(new { message = "Device not found in this room" });
+
+        var fromDate = from is null ? DateTime.UtcNow.AddDays(-3) : DateTime.UnixEpoch.AddMilliseconds(from.Value);
+        var toDate = to is null ? DateTime.UtcNow : DateTime.UnixEpoch.AddMilliseconds(to.Value);
+
+        var history = await deviceRepository.GetDeviceHistoryAsync(deviceId, fromDate, toDate, interval);
+        return Ok(new HistoryDto
+        {
+            Data = history,
+            Metadata = new HistoryDto.HistoryMetadata
+            {
+                From = new DateTimeOffset(fromDate).ToUnixTimeMilliseconds(),
+                To = new DateTimeOffset(toDate).ToUnixTimeMilliseconds(),
+                Interval = interval
+            }
+        });
+    }
+}
+
+A.2 Отримання даних з бази даних
+
+namespace Airsense.API.Repository;
+
+public class DeviceRepository(IDbConnection connection) : IDeviceRepository
+{
+    public async Task<HistoryDeviceDto?> GetDeviceHistoryAsync(
+        int deviceId, 
+        DateTime fromDate, 
+        DateTime toDate, 
+        HistoryDto.HistoryInterval interval
+    )
+    {
+        string intervalSql;
+        switch (interval)
+        {
+            case HistoryDto.HistoryInterval.Minute:
+                intervalSql = "date_trunc('minute', dd.timestamp)";
+                break;
+            case HistoryDto.HistoryInterval.Day:
+                intervalSql = "date_trunc('day', dd.timestamp)";
+                break;
+            case HistoryDto.HistoryInterval.Hour:
+            default:
+                intervalSql = "date_trunc('hour', dd.timestamp)";
+                break;
+        }
+
+        var sql = $"""
+                   SELECT 
+                       d.id AS Id,
+                       d.serial_number AS SerialNumber,
+                       EXTRACT(EPOCH FROM {intervalSql}) AS Timestamp,
+                       AVG(dd.value) AS Value
+                   FROM devices d
+                   LEFT JOIN device_data dd ON dd.device_id = d.id
+                   WHERE d.id = @deviceId
+                   AND dd.timestamp BETWEEN @fromDate AND @toDate
+                   AND dd.applied = true
+                   GROUP BY d.id, {intervalSql}
+                   ORDER BY d.id, {intervalSql}
+                   """;
+
+        var historyData = await connection.QueryAsync<HistoryRawDto>(sql, new { deviceId, fromDate, toDate });
+
+        var history = historyData
+            .GroupBy(s => new { s.Id, s.SerialNumber })
+            .Select(g => new HistoryDeviceDto
+            {
+                Id = g.Key.Id,
+                SerialNumber = g.Key.SerialNumber,
+                History = g.Where(x => x.Timestamp is not null && x.Value is not null).Select(x => new HistoryDeviceDataDto
+                {
+                    Timestamp = x.Timestamp!.Value,
+                    Value = x.Value!.Value
+                }).ToList()
+            });
+
+        return history.FirstOrDefault();
+    }
+}
+ 
+Додаток Б
+Приклад відповіді сервера з історією зміни швидкості пристрою
+
+{
+    "data": {
+        "id": 1,
+        "serial_number": "0a61df1888991de8a0be",
+        "history": [
+            {
+                "value": 23.681818181818183,
+                "timestamp": 1735218840
+            },
+            {
+                "value": 22.695652173913043,
+                "timestamp": 1735218900
+            },
+            {
+                "value": 22,
+                "timestamp": 1735218960
+            },
+            {
+                "value": 21.125,
+                "timestamp": 1735219020
+            },
+            {
+                "value": 21,
+                "timestamp": 1735219080
+            }
+        ]
+    },
+    "metadata": {
+        "from": 1734964743244,
+        "to": 1735223943244,
+        "interval": "minute"
+    }
+}
+ 
+Додаток В
+Фрагмент коду обробки даних від сенсорів
+
+namespace Airsense.API.Services;
+
+public class SensorDataProcessingService(
+    IDeviceRepository deviceRepository,
+    IEnvironmentRepository environmentRepository,
+    ISettingsRepository settingsRepository,
+    INotificationService notificationService) : ISensorDataProcessingService
+{
+    public async Task ProcessDataAsync(int roomId, SensorDataDto data)
+    {
+        var curve = await settingsRepository.GetCurveAsync(roomId, data.Parameter);
+
+        if (curve?.Points == null || curve.Points.Count == 0)
+            return;
+
+        var fanSpeed = GetFanSpeedByValue(curve.Points, data.Value);
+
+        if (!fanSpeed.HasValue)
+            return;
+        
+        await deviceRepository.AddDataAsync(roomId, fanSpeed.Value);
+
+        if (data.Value >= curve.CriticalValue)
+        {
+            var environment = await environmentRepository.GetByRoomIdAsync(roomId);
+            if (environment is null)
+                return;
+            
+            var membersTokens = await environmentRepository.GetMembersNotificationTokensAsync(environment.Id);
+            if (membersTokens.Count == 0)
+                return;
+            
+            await Task.Run(() => 
+                notificationService.SendNotificationAsync(
+                    membersTokens, 
+                    "Critical value exceeded", 
+                    $"Critical value exceeded for {data.Parameter} in  {environment.Name}"
+                )
+            );
+        }
+    }
+
+
+
+    private static int? GetFanSpeedByValue(ICollection<CurvePointDto> points, double value)
+    {
+        var sortedPoints = points.OrderBy(p => p.Value).ToList();
+
+        if (value <= sortedPoints[0].Value)
+            return sortedPoints[0].FanSpeed;
+
+        if (value >= sortedPoints.Last().Value)
+            return sortedPoints.Last().FanSpeed;
+
+        for (var i = 0; i < sortedPoints.Count - 1; i++)
+        {
+            var current = sortedPoints[i];
+            var next = sortedPoints[i + 1];
+            if (value >= current.Value && value <= next.Value)
+            {
+                var interpolatedFanSpeed = current.FanSpeed + (value - current.Value) * (next.FanSpeed - current.FanSpeed) / (next.Value - current.Value);
+                return (int)Math.Round(interpolatedFanSpeed);
+            }
+        }
+
+        return null;
+    }
+}
+ 
+Додаток Г
+Фрагмент коду для пуш-повідомлень
+
+namespace Airsense.API.Services;
+
+public class FirebaseNotificationService : INotificationService
+{
+    public async Task<bool> SendNotificationAsync(string deviceToken, string title, string body, Dictionary<string, string>? data = null)
+    {
+        var messaging = FirebaseMessaging.DefaultInstance; 
+        var result = await messaging.SendAsync(new Message
+        {
+            Token = deviceToken,
+            Notification = new Notification
+            {
+                Title = title,
+                Body = body
+            },
+            Data = data?.ToDictionary()
+        });
+        return !string.IsNullOrEmpty(result);
+    }
+    
+    public async Task SendNotificationAsync(ICollection<string> deviceTokens, string title, string body, Dictionary<string, string>? data = null)
+    {
+        var messaging = FirebaseMessaging.DefaultInstance; 
+        await messaging.SendEachForMulticastAsync(new MulticastMessage
+        {
+            Tokens = deviceTokens as IReadOnlyList<string>,
+            Notification = new Notification
+            {
+                Title = title,
+                Body = body
+            },
+            Data = data?.ToDictionary()
+        });
+    }
+}

@@ -1,3 +1,6 @@
 [submodule "Task2/arkpz-pzpi-22-10-khyzhniak-dmytro-task2"]
 	path = Task2/arkpz-pzpi-22-10-khyzhniak-dmytro-task2
 	url = https://github.com/NureKhyzhniakDmytro/airsense-api
+[submodule "Task3/arkpz-pzpi-22-10-khyzhniak-dmytro-task3"]
+	path = Task3/arkpz-pzpi-22-10-khyzhniak-dmytro-task3
+	url = https://github.com/NureKhyzhniakDmytro/airsense-api
